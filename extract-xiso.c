@@ -251,7 +251,9 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <stdint.h>
 
+#include <assert.h>
 
 #if defined( __FREEBSD__ ) || defined( __OPENBSD__ )
 	#include <machine/limits.h>
@@ -515,58 +517,59 @@ typedef struct create_list create_list;
 typedef struct dir_node_avl dir_node_avl;
 
 struct dir_node {
-	dir_node						   *left;
-	dir_node						   *parent;
-	dir_node_avl					   *avl_node;
+	dir_node						*left;
+	dir_node						*parent;
+	dir_node_avl					*avl_node;
 
-	char							   *filename;
+	char							*filename;
 
-	unsigned short						r_offset;
-	unsigned char						attributes;
-	unsigned char						filename_length;
+	uint16_t						l_offset;
+	uint16_t						r_offset;
+	uint8_t 						attributes;
+	uint8_t							filename_length;
 	
-	unsigned long						file_size;
-	unsigned long						start_sector;
+	uint32_t						file_size;
+	uint32_t						start_sector;
 };
 
 struct dir_node_avl {
-	unsigned long						offset;
-	xoff_t								dir_start;
+	uint32_t						offset;
+	xoff_t							dir_start;
 
-	char							   *filename;
-	unsigned long						file_size;
-	unsigned long						start_sector;
-	dir_node_avl					   *subdirectory;
+	char							*filename;
+	uint32_t						file_size;
+	uint32_t						start_sector;
+	dir_node_avl					*subdirectory;
 	
-	unsigned long						old_start_sector;
+	uint32_t						old_start_sector;
 	
-	avl_skew							skew;	
-	dir_node_avl					   *left;
-	dir_node_avl					   *right;
+	avl_skew						skew;
+	dir_node_avl					*left;
+	dir_node_avl					*right;
 };
 
 struct create_list {
-	char							   *path;
-	char							   *name;
-	create_list						   *next;
+	char							*path;
+	char							*name;
+	create_list						*next;
 };
 
 typedef struct FILE_TIME {
-	unsigned long						l;
-	unsigned long						h;
+	uint32_t						l;
+	uint32_t						h;
 } FILE_TIME;
 
 typedef struct wdsafp_context {
-	xoff_t								dir_start;
-	unsigned long					   *current_sector;
+	xoff_t							dir_start;
+	unsigned long					*current_sector;
 } wdsafp_context;
 
 typedef struct write_tree_context {
-	int									xiso;
-	char							   *path;
-	int									from;
-	progress_callback					progress;
-	xoff_t								final_bytes;
+	int								xiso;
+	char							*path;
+	int								from;
+	progress_callback				progress;
+	xoff_t							final_bytes;
 } write_tree_context;
 
 
@@ -586,9 +589,9 @@ int boyer_moore_init( char *in_pattern, long in_pat_len, long in_alphabet_size )
 
 int free_dir_node_avl( void *in_dir_node_avl, void *, long );
 int extract_file( int in_xiso, dir_node *in_file, modes in_mode, char *path );
-int decode_xiso( char *in_xiso, char *in_path, modes in_mode, char **out_iso_path, bool in_ll_compat );
+int decode_xiso( char *in_xiso, char *in_path, modes in_mode, char **out_iso_path );
 int verify_xiso( int in_xiso, int32_t *out_root_dir_sector, int32_t *out_root_dir_size, char *in_iso_name );
-int traverse_xiso( int in_xiso, dir_node *in_dir_node, xoff_t in_dir_start, char *in_path, modes in_mode, dir_node_avl **in_root, bool in_ll_compat );
+int traverse_xiso( int in_xiso, dir_node *in_dir_node, xoff_t in_dir_start, uint32_t in_dir_size, char *in_path, modes in_mode, dir_node_avl **in_root );
 int create_xiso( char *in_root_directory, char *in_output_directory, dir_node_avl *in_root, int in_xiso, char **out_iso_path, char *in_name, progress_callback in_progress_callback );
 
 FILE_TIME *alloc_filetime_now( void );
@@ -807,13 +810,13 @@ int main( int argc, char **argv ) {
 						
 						if ( err ) { err = 0; free( buf ); continue; }
 					}
-					if ( ! err ) err = decode_xiso( buf, path, k_rewrite, &new_iso_path, true );
+					if ( ! err ) err = decode_xiso( buf, path, k_rewrite, &new_iso_path );
 					if ( ! err && delete && unlink( buf ) == -1 ) log_err( __FILE__, __LINE__, "unable to delete %s\n", buf );
 					
 					if ( buf ) free( buf );
 				} else {
 					// the order of the mutually exclusive options here is important, the extract ? k_extract : k_list test *must* be the final comparison
-					if ( ! err ) err = decode_xiso( argv[ i ], path, extract ? k_extract : k_list, nil, ! optimized );
+					if ( ! err ) err = decode_xiso( argv[ i ], path, extract ? k_extract : k_list, nil );
 				}
 			}
 		}
@@ -927,7 +930,7 @@ int create_xiso( char *in_root_directory, char *in_output_directory, dir_node_av
 	dir_node_avl			root;
 	FILE_TIME			   *ft = nil;
 	write_tree_context		wt_context;
-	unsigned long			start_sector;
+	uint32_t			start_sector;
 	int						i, n, xiso = -1, err = 0;
 	char				   *cwd = nil, *buf = nil, *iso_name, *xiso_path, *iso_dir;
 
@@ -1082,7 +1085,7 @@ int create_xiso( char *in_root_directory, char *in_output_directory, dir_node_av
 }
 
 
-int decode_xiso( char *in_xiso, char *in_path, modes in_mode, char **out_iso_path, bool in_ll_compat ) {
+int decode_xiso( char *in_xiso, char *in_path, modes in_mode, char **out_iso_path ) {
 	dir_node_avl		   *root = nil;
 	bool					repair = false;
 	int32_t					root_dir_sect, root_dir_size;
@@ -1148,12 +1151,12 @@ int decode_xiso( char *in_xiso, char *in_path, modes in_mode, char **out_iso_pat
 			if ( in_mode == k_rewrite ) {
 	
 	if ( ! err && lseek( xiso, (xoff_t) root_dir_sect * XISO_SECTOR_SIZE + s_xbox_disc_lseek, SEEK_SET ) == -1 ) seek_err();
-	if ( ! err ) err = traverse_xiso( xiso, nil, (xoff_t) root_dir_sect * XISO_SECTOR_SIZE + s_xbox_disc_lseek, buf, k_generate_avl, &root, in_ll_compat );
+	if ( ! err ) err = traverse_xiso( xiso, nil, (xoff_t) root_dir_sect * XISO_SECTOR_SIZE + s_xbox_disc_lseek, root_dir_size, buf, k_generate_avl, &root );
 	if ( ! err ) err = create_xiso( iso_name, in_path, root, xiso, out_iso_path, nil, nil );
 			
 			} else {
 	      if ( ! err && lseek( xiso, (xoff_t) root_dir_sect * XISO_SECTOR_SIZE + s_xbox_disc_lseek, SEEK_SET ) == -1) seek_err();
-	      if ( ! err ) err = traverse_xiso( xiso, nil, (xoff_t) root_dir_sect * XISO_SECTOR_SIZE + s_xbox_disc_lseek, buf, in_mode, nil, in_ll_compat );
+	      if ( ! err ) err = traverse_xiso( xiso, nil, (xoff_t) root_dir_sect * XISO_SECTOR_SIZE + s_xbox_disc_lseek, root_dir_size, buf, in_mode, nil );
 			}
 
 			free( buf );
@@ -1177,176 +1180,179 @@ int decode_xiso( char *in_xiso, char *in_path, modes in_mode, char **out_iso_pat
 }
 
 
-int traverse_xiso( int in_xiso, dir_node *in_dir_node, xoff_t in_dir_start, char *in_path, modes in_mode, dir_node_avl **in_root, bool in_ll_compat ) {
+int traverse_xiso( int in_xiso, dir_node *in_dir_node, xoff_t in_dir_start, uint32_t in_dir_size, char *in_path, modes in_mode, dir_node_avl **in_root ) {
 	dir_node_avl		   *avl;
 	char				   *path;
 	xoff_t					curpos;
 	dir_node				subdir;
 	dir_node			   *dir, node;
 	int						err = 0, sector;
-	unsigned short			l_offset = 0, tmp;
 
 	if ( in_dir_node == nil ) in_dir_node = &node;
 
 	memset( dir = in_dir_node, 0, sizeof(dir_node) );
 
-read_entry:
+	unsigned long offset = 0;
+	while(true) {
 
-    if ( ! err && read( in_xiso, &tmp, XISO_TABLE_OFFSET_SIZE ) != XISO_TABLE_OFFSET_SIZE ) read_err();
+		assert(offset % 4 == 0);
 
-	if ( ! err ) {
-		if ( tmp == XISO_PAD_SHORT ) {
-			l_offset = l_offset * XISO_DWORD_SIZE + ( XISO_SECTOR_SIZE - ( l_offset * XISO_DWORD_SIZE ) % XISO_SECTOR_SIZE );
-			err = lseek( in_xiso, in_dir_start + (xoff_t) l_offset, SEEK_SET ) == -1 ? 1 : 0;
-		
-			if ( ! err ) goto read_entry;		// me and my silly comments
-		} else {
-			l_offset = tmp;
+#if DEBUG
+		if ( ! err && ( curpos = lseek( in_xiso, 0, SEEK_CUR ) ) == -1 ) seek_err();
+		assert(curpos == (in_dir_start + offset));
+#endif
+
+		if (offset >= in_dir_size) {
+			break;
 		}
-	}
 
-	if ( ! err && read( in_xiso, &dir->r_offset, XISO_TABLE_OFFSET_SIZE ) != XISO_TABLE_OFFSET_SIZE ) read_err();
-	if ( ! err && read( in_xiso, &dir->start_sector, XISO_SECTOR_OFFSET_SIZE ) != XISO_SECTOR_OFFSET_SIZE ) read_err();
-	if ( ! err && read( in_xiso, &dir->file_size, XISO_FILESIZE_SIZE ) != XISO_FILESIZE_SIZE ) read_err();
-	if ( ! err && read( in_xiso, &dir->attributes, XISO_ATTRIBUTES_SIZE ) != XISO_ATTRIBUTES_SIZE ) read_err();
-	if ( ! err && read( in_xiso, &dir->filename_length, XISO_FILENAME_LENGTH_SIZE ) != XISO_FILENAME_LENGTH_SIZE ) read_err();
+#if DEBUG
+		assert(sizeof(dir->l_offset) == XISO_TABLE_OFFSET_SIZE);
+		assert(sizeof(dir->r_offset) == XISO_TABLE_OFFSET_SIZE);
+		assert(sizeof(dir->start_sector) == XISO_SECTOR_OFFSET_SIZE);
+		assert(sizeof(dir->file_size) == XISO_FILESIZE_SIZE);
+		assert(sizeof(dir->attributes) == XISO_ATTRIBUTES_SIZE);
+		assert(sizeof(dir->filename_length) == XISO_FILENAME_LENGTH_SIZE);
+#endif
 
-	if ( ! err ) {
-		little16( l_offset );
-		little16( dir->r_offset );
-		little32( dir->file_size );
-		little32( dir->start_sector );
+		if ( ! err && read( in_xiso, &dir->l_offset, XISO_TABLE_OFFSET_SIZE ) != XISO_TABLE_OFFSET_SIZE ) read_err();
+		offset += XISO_TABLE_OFFSET_SIZE;
 
-		if ( ( dir->filename = (char *) malloc( dir->filename_length + 1 ) ) == nil ) mem_err();
-	}
-	
-	if ( ! err ) {
-		if ( read( in_xiso, dir->filename, dir->filename_length ) != dir->filename_length ) read_err();
+		if ( ! err && read( in_xiso, &dir->r_offset, XISO_TABLE_OFFSET_SIZE ) != XISO_TABLE_OFFSET_SIZE ) read_err();
+		offset += XISO_TABLE_OFFSET_SIZE;
+
+		if ( ! err && read( in_xiso, &dir->start_sector, XISO_SECTOR_OFFSET_SIZE ) != XISO_SECTOR_OFFSET_SIZE ) read_err();
+		offset += XISO_SECTOR_OFFSET_SIZE;
+
+		if ( ! err && read( in_xiso, &dir->file_size, XISO_FILESIZE_SIZE ) != XISO_FILESIZE_SIZE ) read_err();
+		offset += XISO_FILESIZE_SIZE;
+
+		if ( ! err && read( in_xiso, &dir->attributes, XISO_ATTRIBUTES_SIZE ) != XISO_ATTRIBUTES_SIZE ) read_err();
+		offset += XISO_ATTRIBUTES_SIZE;
+
+		if ( ! err && read( in_xiso, &dir->filename_length, XISO_FILENAME_LENGTH_SIZE ) != XISO_FILENAME_LENGTH_SIZE ) read_err();
+		offset += XISO_FILENAME_LENGTH_SIZE;
+
 		if ( ! err ) {
-			dir->filename[ dir->filename_length ] = 0;
-	
-			// security patch (Chris Bainbridge), modified by in to support "...", etc. 02.14.06 (in)
-			if ( ! strcmp( dir->filename, "." ) || ! strcmp( dir->filename, ".." ) || strchr( dir->filename, '/' ) || strchr( dir->filename, '\\' ) ) {
-				log_err( __FILE__, __LINE__, "filename '%s' contains invalid character(s), aborting.", dir->filename );
-				exit( 1 );
+			little16( dir->l_offset );
+			little16( dir->r_offset );
+			little32( dir->start_sector );
+			little32( dir->file_size );
+			little32( dir->attributes );
+			little32( dir->filename_length );
+		}
+
+		if ( ! err ) {
+			if (( dir->l_offset == (uint16_t)-1 ) && ( dir->r_offset == (uint16_t)-1 )) {
+				int pad = (XISO_SECTOR_SIZE - (offset % XISO_SECTOR_SIZE)) % XISO_SECTOR_SIZE;
+				err = lseek( in_xiso, pad, SEEK_CUR ) == -1 ? 1 : 0;
+				offset += pad;
+				if ( ! err ) continue;		// me and my silly comments
 			}
 		}
-	}
-	
-	if ( ! err && in_mode == k_generate_avl ) {
-		if ( ( avl = (dir_node_avl *) malloc( sizeof(dir_node_avl) ) ) == nil ) mem_err();
-		if ( ! err ) {
-			memset( avl, 0, sizeof(dir_node_avl) );
-			
-			if ( ( avl->filename = strdup( dir->filename ) ) == nil ) mem_err();
-		}
-		if ( ! err ) {
-			dir->avl_node = avl;
 
-			avl->file_size = dir->file_size;
-			avl->old_start_sector = dir->start_sector;
-						
-			if ( avl_insert( in_root, avl ) == k_avl_error ) misc_err( "this iso appears to be corrupt\n", 0, 0, 0 );
-		}
-	}
-
-	if ( ! err && l_offset ) {
-		in_ll_compat = false;
-	
-		if ( ( dir->left = (dir_node *) malloc( sizeof(dir_node) ) ) == nil ) mem_err();
 		if ( ! err ) {
-			memset( dir->left, 0, sizeof(dir_node) );
-			if ( lseek( in_xiso, in_dir_start + (xoff_t) l_offset * XISO_DWORD_SIZE, SEEK_SET ) == -1 ) seek_err();
+			if ( ( dir->filename = (char *) malloc( dir->filename_length + 1 ) ) == nil ) mem_err();
 		}
+
 		if ( ! err ) {
-			dir->left->parent = dir;
-			dir = dir->left;
-			
-			goto read_entry;
+
+			if ( read( in_xiso, dir->filename, dir->filename_length ) != dir->filename_length ) read_err();
+			offset += dir->filename_length;
+
+			int pad = (4 - (offset % 4)) % 4;
+			err = lseek( in_xiso, pad, SEEK_CUR ) == -1 ? 1 : 0;
+			offset += pad;
+
+			if ( ! err ) {
+				dir->filename[ dir->filename_length ] = 0;
+
+				// security patch (Chris Bainbridge), modified by in to support "...", etc. 02.14.06 (in)
+				if ( ! strcmp( dir->filename, "." ) || ! strcmp( dir->filename, ".." ) || strchr( dir->filename, '/' ) || strchr( dir->filename, '\\' ) ) {
+					log_err( __FILE__, __LINE__, "filename '%s' contains invalid character(s), aborting.", dir->filename );
+					exit( 1 );
+				}
+			}
 		}
-	}
 
-left_processed:
-			
-	if ( dir->left ) { free( dir->left ); dir->left = nil; }
+		if ( ! err && in_mode == k_generate_avl ) {
+			if ( ( avl = (dir_node_avl *) malloc( sizeof(dir_node_avl) ) ) == nil ) mem_err();
+			if ( ! err ) {
+				memset( avl, 0, sizeof(dir_node_avl) );
 
-	if ( ! err && ( curpos = lseek( in_xiso, 0, SEEK_CUR ) ) == -1 ) seek_err();
-	
-	if ( ! err ) {
-		if ( dir->attributes & XISO_ATTRIBUTE_DIR ) {
-			if ( in_path ) {
-				if ( ( path = (char *) malloc( strlen( in_path ) + dir->filename_length + 2 ) ) == nil ) mem_err();
-			
+				if ( ( avl->filename = strdup( dir->filename ) ) == nil ) mem_err();
+			}
+			if ( ! err ) {
+				dir->avl_node = avl;
+
+				avl->file_size = dir->file_size;
+				avl->old_start_sector = dir->start_sector;
+
+				if ( avl_insert( in_root, avl ) == k_avl_error ) misc_err( "this iso appears to be corrupt\n", 0, 0, 0 );
+			}
+		}
+
+		if ( ! err ) {
+			if ( dir->attributes & XISO_ATTRIBUTE_DIR ) {
+				if ( in_path ) {
+					if ( ( path = (char *) malloc( strlen( in_path ) + dir->filename_length + 2 ) ) == nil ) mem_err();
+
+					if ( ! err ) {
+						sprintf( path, "%s%s%c", in_path, dir->filename, PATH_CHAR );
+						if ( dir->start_sector && lseek( in_xiso, (xoff_t) dir->start_sector * XISO_SECTOR_SIZE + s_xbox_disc_lseek, SEEK_SET ) == -1 ) seek_err();
+					}
+				} else path = nil;
+
 				if ( ! err ) {
-					sprintf( path, "%s%s%c", in_path, dir->filename, PATH_CHAR );
-					if ( dir->start_sector && lseek( in_xiso, (xoff_t) dir->start_sector * XISO_SECTOR_SIZE + s_xbox_disc_lseek, SEEK_SET ) == -1 ) seek_err();
+					if ( !s_remove_systemupdate || !strstr( dir->filename, s_systemupdate ) )
+					{
+						if ( in_mode == k_extract ) {
+							if ( ( err = mkdir( dir->filename, 0755 ) ) ) mkdir_err( dir->filename );
+							if ( ! err && dir->start_sector && ( err = chdir( dir->filename ) ) ) chdir_err( dir->filename );
+						}
+						if ( ! err && in_mode != k_list && in_mode != k_generate_avl ) exiso_log( "creating %s (0 bytes) [OK]\n", path );
+					}
 				}
-			} else path = nil;
-	
-			if ( ! err ) {
-				if ( !s_remove_systemupdate || !strstr( dir->filename, s_systemupdate ) )
-				{
-				if ( in_mode == k_extract ) {
-					if ( ( err = mkdir( dir->filename, 0755 ) ) ) mkdir_err( dir->filename );
-					if ( ! err && dir->start_sector && ( err = chdir( dir->filename ) ) ) chdir_err( dir->filename );
-				}
-				if ( ! err && in_mode != k_list && in_mode != k_generate_avl ) exiso_log( "creating %s (0 bytes) [OK]\n", path );
-			}
-			}
-			
-			if ( ! err && dir->start_sector ) {
-				memcpy( &subdir, dir, sizeof(dir_node) );
-				
-				subdir.parent = nil;
-				if ( ! err && dir->file_size > 0 ) err = traverse_xiso( in_xiso, &subdir, (xoff_t) dir->start_sector * XISO_SECTOR_SIZE + s_xbox_disc_lseek, path, in_mode, in_mode == k_generate_avl ? &dir->avl_node->subdirectory : nil, in_ll_compat );        
+				if ( ! err && dir->start_sector ) {
+					memcpy( &subdir, dir, sizeof(dir_node) );
 
-				if ( !s_remove_systemupdate || !strstr( dir->filename, s_systemupdate ) )
-				{
-	
-				if ( ! err && in_mode == k_extract && ( err = chdir( ".." ) ) ) chdir_err( ".." );
-			}
-			}
-	
-			if ( path ) free( path );
-		} else if ( in_mode != k_generate_avl ) {
-			if ( ! err ) {
-				if ( !s_remove_systemupdate || !strstr( in_path, s_systemupdate ) )
-				{
+					subdir.parent = nil;
+					if ( ! err && dir->file_size > 0 ) err = traverse_xiso( in_xiso, &subdir, (xoff_t) dir->start_sector * XISO_SECTOR_SIZE + s_xbox_disc_lseek, dir->file_size, path, in_mode, in_mode == k_generate_avl ? &dir->avl_node->subdirectory : nil);
+					err = lseek( in_xiso, in_dir_start + offset, SEEK_SET ) == -1 ? 1 : 0;
 
-				if ( in_mode == k_extract ) {
-						err = extract_file( in_xiso, dir, in_mode, in_path );
-				} else {
-					exiso_log( "%s%s%s (%lu bytes)%s", in_mode == k_extract ? "extracting " : "", in_path, dir->filename, dir->file_size , "" ); flush();
-					exiso_log( "\n" );
+					if ( !s_remove_systemupdate || !strstr( dir->filename, s_systemupdate ) )
+					{
+						if ( ! err && in_mode == k_extract && ( err = chdir( ".." ) ) ) chdir_err( ".." );
+					}
 				}
 
-				++s_total_files;
-				++s_total_files_all_isos;
-				s_total_bytes += dir->file_size;
-				s_total_bytes_all_isos += dir->file_size;
+				if ( path ) free( path );
+			} else if ( in_mode != k_generate_avl ) {
+				if ( ! err ) {
+					if ( !s_remove_systemupdate || !strstr( in_path, s_systemupdate ) )
+					{
+
+						if ( in_mode == k_extract ) {
+								err = extract_file( in_xiso, dir, in_mode, in_path );
+								err = lseek( in_xiso, in_dir_start + offset, SEEK_SET ) == -1 ? 1 : 0;
+						} else {
+							exiso_log( "%s%s%s (%lu bytes)%s", in_mode == k_extract ? "extracting " : "", in_path, dir->filename, dir->file_size , "" ); flush();
+							exiso_log( "\n" );
+						}
+
+						++s_total_files;
+						++s_total_files_all_isos;
+						s_total_bytes += dir->file_size;
+						s_total_bytes_all_isos += dir->file_size;
+					}
 				}
 			}
 		}
-	}
-	
-	if ( ! err && dir->r_offset ) {
-		// compatibility for iso's built as linked lists (bleh!)
-		if ( in_ll_compat && (xoff_t) dir->r_offset * XISO_DWORD_SIZE / XISO_SECTOR_SIZE > ( sector = (int) (( curpos - in_dir_start ) / XISO_SECTOR_SIZE )) ) dir->r_offset = sector * ( XISO_SECTOR_SIZE / XISO_DWORD_SIZE ) + ( XISO_SECTOR_SIZE / XISO_DWORD_SIZE );
-		
-		if ( ! err && lseek( in_xiso, in_dir_start + (xoff_t) dir->r_offset * XISO_DWORD_SIZE, SEEK_SET ) == -1 ) seek_err();
-		if ( ! err ) {
-			if ( dir->filename ) { free( dir->filename ); dir->filename = nil; }
 
-			l_offset = dir->r_offset;
-			
-			goto read_entry;
-		}
-	}
+		if ( dir->filename ) free( dir->filename );
 
-	if ( dir->filename ) free( dir->filename );
-	
-	if ( ( dir = dir->parent ) ) goto left_processed;
-	
+    }
+
 	return err;
 }
 
